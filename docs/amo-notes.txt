@@ -1,0 +1,170 @@
+AMO SUBMISSION NOTES
+Add-on: Facebook Post Image Downloader
+Add-on ID: facebook-post-images@example.local
+Version: 1.1.0
+File: facebook_post_image_downloader-1.1.0.xpi
+Manifest: V2 (persistent background page)
+
+
+===============================================================================
+1) VERSION NOTES (release notes for 1.1.0)
+===============================================================================
+
+This release replaces the previous image-detection and packaging code. The
+1.0.0 build only read thumbnail URLs from the rendered post, so a post with
+9 photos produced a single ~400 px image.
+
+Fixes
+-----
+* Post detection: Facebook renders a post permalink inside role="dialog"
+  elements. The new build identifies the post scope correctly instead of
+  mistaking the post dialog for the photo viewer (which previously stopped the
+  scan after one image).
+* Photo navigation: advancing the viewer now sends exactly one ArrowRight
+  per step. The previous code dispatched the key to several targets, which
+  advanced three photos per step and skipped images.
+* Stop condition: every photo in the viewer has a distinct signed image URL.
+  URLs already collected are recorded, and the scan stops as soon as the
+  viewer wraps back to an already-seen URL (Facebook loops the set). A
+  hard limit of 40 steps prevents unbounded navigation. Counters are not
+  used because Facebook obfuscates viewer text with zero-width characters.
+* Page restoration: after scanning, the viewer is closed and, when the
+  viewer was opened by the extension, the browser returns to the post page.
+* Thumbnail filter: images narrower than 300 px are rejected, so the
+  low-resolution grid tiles are no longer used as final output.
+
+New
+---
+* Full-set scan: the extension opens the post's photo viewer and walks the
+  entire photo set, collecting every photo instead of only the visible tiles.
+  Verified on a 9-photo post: 9 of 9 photos, all 1449 x 2048.
+* High-resolution download: image URLs are taken from the viewer's rendered
+  image (the same URL the browser displays), not reconstructed or resized.
+  No image URL parameters are rewritten.
+* Background fetching: images are downloaded from the extension background
+  page with host permissions, which avoids the CORS restriction that blocks
+  fetching fbcdn URLs from the page context.
+* PDF output: all photos are saved as one PDF, one photo per A4 page, in
+  post/viewer order. JPEG data is embedded directly as /DCTDecode without
+  re-encoding, so there is no quality loss and CPU/RAM use is minimal.
+  Non-JPEG inputs (if Facebook ever serves them) are converted to JPEG once.
+* Progress reporting: the toolbar badge shows n/N while fetching and "PDF"
+  while assembling.
+* Metadata: add-on ID, name and strict_min_version now match the AMO
+  listing (id facebook-post-images@example.local, min Firefox 121).
+
+Removed
+-------
+* ZIP output and the ZIP writer. Output is a single PDF per scan.
+
+Verified
+--------
+* 9-photo post -> 9-page PDF, every page 1449 x 2048, 2.52 MB, pages use
+  the original JPEG bytes (/DCTDecode).
+* web-ext lint: 0 errors, 0 warnings, 0 notices.
+* Installs and runs on Firefox 153.3.0esr.
+
+
+===============================================================================
+2) NOTES TO REVIEWER
+===============================================================================
+
+Summary
+-------
+The add-on downloads the photos of the Facebook post that is open in the
+active tab and saves them as one PDF. It uses the user's existing Facebook
+session in the browser; there is no separate login, no server, and no
+tracking. It does not bypass Facebook access controls: it only uses photos
+Facebook already serves to the logged-in browser.
+
+A Facebook account and an internet connection are required for full testing.
+Facebook photo URLs are not public, so the add-on cannot be exercised while
+logged out.
+
+Test account (pick one)
+-----------------------
+[ ] Use the test account below:
+
+    Username / e-mail: ______________________________________________
+    Password:          ______________________________________________
+
+[ ] Or register a dedicated, throwaway Facebook account. Please do NOT use a
+    personal account for review. A new account may show a "confirm your
+    identity" prompt before the news feed loads; that is a Facebook-side
+    restriction, not an add-on error.
+
+After logging in, keep the same Firefox profile/window: the add-on relies on
+the cookies in that profile.
+
+How to test (about 1 minute)
+----------------------------
+1. Log in to https://www.facebook.com in the test profile.
+2. Open any post that contains several photos (2 or more). A post permalink
+   such as facebook.com/permalink.php?story_fbid=...&id=... works, and so does
+   a "share/p/..." short link after it redirects.
+3. Click the add-on's toolbar button once. Do not click a photo first.
+4. Expected: the add-on opens the post's photo viewer, advances through the
+   set (one photo every ~1 second), closes the viewer, returns to the post,
+   and saves Facebook_Post_HD_<date>_<time>.pdf in Downloads. The popup
+   reports the photo count, the source ("viewer"), and the smallest image
+   width.
+5. Open the PDF and confirm the page count equals the number of photos on the
+   post and that pages are sharp (A4 pages, image not upscaled).
+
+Notes for testing
+-----------------
+* A scan takes roughly 1 second per photo (9 photos was about 8-10 seconds).
+* While scanning, the extension synthesizes ArrowRight key events on the
+  open viewer and may click the viewer's next/previous controls as fallbacks.
+  This is expected behaviour and is how the full photo set is enumerated.
+* If the scan cannot open the viewer, it reports how many photos it found and
+  asks the user to open a photo manually; the thumbnail fallback is a last
+  resort and is clearly lower resolution.
+* Facebook changes its markup from time to time. All Facebook-specific
+  selectors are contained in content/content.js (post scope, viewer
+  detection, controls) and can be updated without touching the download or
+  PDF code.
+
+Permissions justification
+-------------------------
+* downloads - save the generated PDF.
+* tabs - find the active tab and message the content script; also used to
+  inject the content script into an already-open tab.
+* scripting - inject the content script when the tab was opened before the
+  add-on was installed/reloaded.
+* https://facebook.com/*, https://*.facebook.com/* - read the post DOM and
+  drive the photo viewer on the page the user already has open.
+* https://*.fbcdn.net/*, https://*.fbsbx.com/* - fetch the exact image URLs
+  Facebook's viewer has already loaded (signed CDN URLs).
+No other hosts are requested.
+
+Data collection and privacy
+---------------------------
+* browser_specific_settings.gecko.data_collection_permissions: ["none"].
+* No analytics, no telemetry, no remote code, no external servers, no
+  storage of photos or browsing data. Everything happens locally in the
+  browser; the only network requests are for the Facebook pages/CDN images
+  the user is already viewing.
+
+Why Manifest V2
+---------------
+The download of a multi-photo post can take 20-60 seconds. A persistent
+background page keeps that work alive if the popup is closed. Firefox 153
+and ESR still support MV2. If an MV3 build is required, the background can
+be ported to an event page, but its lifetime during long downloads would
+need to be re-validated.
+
+Known limitations
+-----------------
+* Requires an active Facebook login.
+* Downloads the photo set attached to the open post; extremely large sets
+  take longer (bounded at 40 photos per scan).
+* PDF pages are A4 with the image fitted and centered; original pixels are
+  preserved as-is.
+* Facebook markup changes may require a selector update (see content.js).
+
+Contact
+-------
+If any test step fails, please include the popup message text (it reports
+found-of-total and the source) - that is enough to pinpoint the failing
+stage.

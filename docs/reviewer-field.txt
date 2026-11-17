@@ -1,0 +1,14 @@
+Requires a Facebook login (photo URLs are not public). Use the test account:
+  User: <FILL IN THROWAWAY ACCOUNT EMAIL>
+  Pass: <FILL IN>
+(Please don't use a personal account.)
+
+TEST (1 min): log in to facebook.com in this profile, open any post with 2+ photos, click the toolbar button once. Expected: it opens the post's photo viewer, advances through every photo (~1s each), closes the viewer, returns to the post, and saves Facebook_Post_HD_<date>.pdf to Downloads. Popup shows the count, source "viewer", and smallest image width. Open the PDF: page count should equal the photo count and pages should be sharp.
+
+The extension only uses photos Facebook already serves to the logged-in browser. It enumerates the viewer's set because the post grid exposes only small thumbnails; it stops when the viewer wraps to an already-seen URL (hard cap 40 steps). Image URLs are the viewer's own signed URLs; nothing is rewritten.
+
+Permissions: downloads (save PDF); tabs + scripting (message/inject the content script in the open Facebook tab); *.facebook.com (read the open post, drive the viewer); *.fbcdn.net/*.fbsbx.com (fetch the images the viewer already loaded). No other hosts, no storage, no analytics, no remote code; data_collection_permissions = none.
+
+Manifest V2 is used for a persistent background page so a 20-60s multi-photo download survives the popup closing. Firefox 153/ESR still support MV2.
+
+Known limits: needs login; ~1s per photo; A4 PDF pages with original pixels preserved (no re-encode); Facebook markup changes may require a content.js selector update. If a step fails, the popup text (found-of-total + source) identifies the failing stage.
