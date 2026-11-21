@@ -321,7 +321,7 @@
     return { viewer: null, navigated: location.pathname + location.search !== startedPath, opened: true };
   }
 
-  async function sweep(viewer) {
+  async function sweep(viewer, onProgress) {
     const root = viewer.root;
     const out = [];
     const seen = new Set();
@@ -333,6 +333,7 @@
       if (seen.has(key)) break;
       seen.add(key);
       out.push({ urls, url: urls[0], pos: out.length + 1 });
+      if (onProgress) onProgress(out.length);
       if (!(await advance(root))) break;
     }
     return out;
@@ -392,7 +393,7 @@
   }
 
   let busy = false;
-  async function scan() {
+  async function scan(onProgress) {
     if (busy) throw new Error("A scan is already running.");
     busy = true;
     const diag = { source: "none", viewer: false, anchors: 0, total: null };
@@ -413,7 +414,7 @@
       let images = [];
       if (viewer) {
         diag.source = "viewer";
-        images = await sweep(viewer);
+        images = await sweep(viewer, onProgress);
         if (opened) {
           press("Escape");
           await sleep(500);
@@ -474,7 +475,7 @@
     button.style.opacity = ".6";
     try {
       say("Scanning…");
-      const result = await scan();
+      const result = await scan((found) => say(`Scanning… ${found} photo${found === 1 ? "" : "s"}`));
       if (!result.images.length) { say(result.reason || "No photos found."); return; }
       say(`Found ${result.images.length}. Building PDF…`);
       const saved = await browser.runtime.sendMessage({ type: "download", images: result.images });
@@ -490,8 +491,17 @@
   }
   setTimeout(checkUi, 1500);
 
+  function showStatus(text) {
+    const host = document.getElementById("fbhd-launcher");
+    const span = host && host.querySelector("span");
+    if (!span) return;
+    span.textContent = text || "";
+    span.style.display = text ? "inline-block" : "none";
+  }
+
   browser.runtime.onMessage.addListener((message) => {
     if (!message || typeof message !== "object") return undefined;
+    if (message.type === "progress-page") { if (message.text) showStatus(message.text); return undefined; }
     if (message.type === "ping") return Promise.resolve({ ok: true });
     if (message.type === "scan") return scan().catch((error) => ({ images: [], reason: error.message || String(error), diag: { source: "error" } }));
     return undefined;

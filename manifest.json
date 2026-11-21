@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Facebook Post Image Downloader",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Select, preview, and download the images of the Facebook post you are viewing as one PDF.",
   "permissions": [
     "downloads",

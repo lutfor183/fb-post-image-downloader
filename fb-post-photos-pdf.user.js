@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FB Post Photos to PDF (HD)
 // @namespace    https://github.com/lutfor183/fb-post-image-downloader
-// @version      1.5.0
+// @version      1.5.1
 // @description  Save every photo of the open Facebook post as one high-resolution PDF.
 // @match        https://facebook.com/*
 // @match        https://*.facebook.com/*
@@ -418,7 +418,7 @@
     return { viewer: null, navigated: location.pathname + location.search !== startedPath, opened: true };
   }
 
-  async function sweep(viewer) {
+  async function sweep(viewer, onProgress) {
     const root = viewer.root;
     const out = [];
     const seen = new Set();
@@ -430,6 +430,7 @@
       if (seen.has(key)) break;
       seen.add(key);
       out.push({ urls, url: urls[0], pos: out.length + 1 });
+      if (onProgress) onProgress(out.length);
       if (!(await advance(root))) break;
     }
     return out;
@@ -489,7 +490,7 @@
   }
 
   let busy = false;
-  async function scan() {
+  async function scan(onProgress) {
     if (busy) throw new Error("A scan is already running.");
     busy = true;
     const diag = { source: "none", viewer: false, anchors: 0, total: null };
@@ -510,7 +511,7 @@
       let images = [];
       if (viewer) {
         diag.source = "viewer";
-        images = await sweep(viewer);
+        images = await sweep(viewer, onProgress);
         if (opened) {
           press("Escape");
           await sleep(500);
@@ -572,10 +573,10 @@
     button.style.opacity = ".6";
     try {
       say("Scanning…");
-      const result = await scan();
+      const result = await scan((found) => say(`Scanning… ${found} photo${found === 1 ? "" : "s"}`));
       if (!result.images.length) { say(result.reason || "No photos found."); return; }
       say(`Found ${result.images.length}. Building PDF…`);
-      const saved = await saveImagesAsPdf(result.images);
+      const saved = await saveImagesAsPdf(result.images, (text) => say(text));
       if (!saved || !saved.ok) { say(`Failed: ${(saved && saved.error) || "unknown error"}`); return; }
       if (saved.how === "link") {
         statusEl.textContent = "";
@@ -600,6 +601,14 @@
     }
   }
   setTimeout(checkUi, 1500);
+
+  function showStatus(text) {
+    const host = document.getElementById("fbhd-launcher");
+    const span = host && host.querySelector("span");
+    if (!span) return;
+    span.textContent = text || "";
+    span.style.display = text ? "inline-block" : "none";
+  }
 
 
   function pdfName() {
@@ -652,10 +661,22 @@
     return { bytes: out, width: canvas.width, height: canvas.height, components: 3 };
   }
 
-  async function saveImagesAsPdf(images) {
+  function triggerDownload(url, name) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  async function saveImagesAsPdf(images, progress) {
+    const report = typeof progress === "function" ? progress : () => {};
     const pages = [];
     const failures = [];
     for (let i = 0; i < images.length; i++) {
+      report(`Downloading ${i + 1}/${images.length}…`);
       const image = images[i] || {};
       const urls = [...new Set([...(Array.isArray(image.urls) ? image.urls : []), image.url].filter((u) => typeof u === "string" && /^https?:/i.test(u)))].slice(0, 4);
       let done = false;
@@ -672,20 +693,12 @@
       if (!done) continue;
     }
     if (!pages.length) throw new Error(`No photo could be fetched. ${failures.slice(0, 3).join("; ")}`);
+    report("Building PDF…");
+    const name = pdfName();
     const url = URL.createObjectURL(makePdf(pages));
-    if (isAndroid) {
-      setTimeout(() => URL.revokeObjectURL(url), 600000);
-      return { ok: true, count: pages.length, failures, how: "link", url };
-    }
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = pdfName();
-    link.style.display = "none";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 120000);
-    return { ok: true, count: pages.length, failures, how: "download" };
+    triggerDownload(url, name);
+    setTimeout(() => URL.revokeObjectURL(url), 600000);
+    return { ok: true, count: pages.length, failures, how: isAndroid ? "link" : "download", url };
   }
 
 })();
