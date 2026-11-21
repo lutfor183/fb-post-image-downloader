@@ -95,6 +95,36 @@ async function asJpeg(result) {
   return { bytes, width: canvas.width, height: canvas.height, components: 3 };
 }
 
+async function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  let android = false;
+  try {
+    const info = await api.runtime.getPlatformInfo();
+    android = info.os === "android";
+  } catch {}
+  const openTab = async () => { await api.tabs.create({ url, active: true }); };
+  if (android) {
+    try {
+      await openTab();
+      setTimeout(() => URL.revokeObjectURL(url), 600000);
+      return { how: "tab" };
+    } catch {}
+  }
+  try {
+    await api.downloads.download({ url, filename, saveAs: false, conflictAction: "uniquify" });
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+    return { how: "download" };
+  } catch (error) {
+    try {
+      await openTab();
+      setTimeout(() => URL.revokeObjectURL(url), 600000);
+      return { how: "tab" };
+    } catch {
+      throw error;
+    }
+  }
+}
+
 async function downloadAll(images) {
   const list = [];
   const seen = new Set();
@@ -123,16 +153,11 @@ async function downloadAll(images) {
   if (!pages.length) throw new Error(`No photo could be fetched. ${failures.join("; ")}`);
 
   badge("PDF", "#1877f2");
-  const url = URL.createObjectURL(makePdf(pages));
-  try {
-    await api.downloads.download({ url, filename: pdfName(), saveAs: false, conflictAction: "uniquify" });
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 120000);
-  }
+  const saved = await saveBlob(makePdf(pages), pdfName());
   const width = Number.isFinite(minWidth) ? minWidth : null;
   badge("", null);
   try { api.runtime.sendMessage({ type: "progress", text: "" }).catch(() => {}); } catch {}
-  return { ok: true, count: pages.length, failures, minWidth: width };
+  return { ok: true, count: pages.length, failures, minWidth: width, how: saved.how };
 }
 
 api.runtime.onMessage.addListener((message) => {
@@ -145,3 +170,79 @@ api.runtime.onMessage.addListener((message) => {
   }
   return undefined;
 });
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let running = false;
+
+function notify(title, message) {
+  try { api.notifications.create({ type: "basic", title, message }); } catch {}
+}
+
+async function ensureContentScript(tabId) {
+  try {
+    const reply = await api.tabs.sendMessage(tabId, { type: "ping" });
+    if (reply && reply.ok) return true;
+  } catch {}
+  try {
+    if (api.scripting && api.scripting.executeScript) {
+      await api.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+    } else if (api.tabs.executeScript) {
+      await api.tabs.executeScript(tabId, { file: "content.js" });
+    }
+  } catch {}
+  await sleep(400);
+  try {
+    const reply = await api.tabs.sendMessage(tabId, { type: "ping" });
+    return Boolean(reply && reply.ok);
+  } catch {
+    return false;
+  }
+}
+
+async function chooseTab(tab) {
+  const isFacebook = (url) => /^https:\/\/([a-z0-9-]+\.)?facebook\.com\//i.test(url || "");
+  if (tab && isFacebook(tab.url)) return tab;
+  const tabs = await api.tabs.query({ url: "*://*.facebook.com/*" });
+  tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+  return tabs[0] || tab;
+}
+
+async function runFromAction(tab) {
+  if (running) return;
+  running = true;
+  try {
+    const target = await chooseTab(tab);
+    if (!target || !/^https:\/\/([a-z0-9-]+\.)?facebook\.com\//i.test(target.url || "")) {
+      notify("Facebook Post Image Downloader", "Open a Facebook post first.");
+      return;
+    }
+    let ready = await ensureContentScript(target.id);
+    if (!ready) {
+      try { await api.tabs.reload(target.id); await sleep(2500); } catch {}
+      ready = await ensureContentScript(target.id);
+    }
+    if (!ready) {
+      notify("Facebook Post Image Downloader", "Reload the Facebook tab, then click again.");
+      return;
+    }
+    try { await api.tabs.update(target.id, { active: true }); } catch {}
+    await sleep(150);
+    const scan = await api.tabs.sendMessage(target.id, { type: "scan" });
+    if (!scan || !scan.images || !scan.images.length) {
+      notify("Facebook Post Image Downloader", (scan && scan.reason) || "No photos found.");
+      return;
+    }
+    const result = await downloadAll(scan.images);
+    if (result && result.ok) {
+      notify("Facebook Post Image Downloader", result.how === "tab" ? `Opened ${result.count}-page PDF.` : `Saved ${result.count}-page PDF to Downloads.`);
+    } else {
+      notify("Facebook Post Image Downloader", `Failed: ${(result && result.error) || "unknown error"}`);
+    }
+  } catch (error) {
+    notify("Facebook Post Image Downloader", `Failed: ${(error && error.message) || error}`);
+  } finally {
+    running = false;
+  }
+}
+
+api.browserAction.onClicked.addListener((tab) => { runFromAction(tab); });

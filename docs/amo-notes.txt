@@ -1,14 +1,34 @@
 AMO SUBMISSION NOTES
 Add-on: Facebook Post Image Downloader
 Add-on ID: facebook-post-images@example.local
-Version: 1.1.0
-File: facebook_post_image_downloader-1.1.0.xpi
+Version: 1.2.0
+File: facebook_post_image_downloader-1.2.0.xpi
 Manifest: V2 (persistent background page)
 
 
 ===============================================================================
-1) VERSION NOTES (release notes for 1.1.0)
+1) VERSION NOTES (release notes for 1.2.0)
 ===============================================================================
+
+1.2.0 - reliability and Android
+
+* Fixed "Could not establish connection. Receiving end does not exist." when
+  the Facebook tab was opened before the add-on was installed or reloaded.
+  The popup now pings the tab, injects the content script (scripting API with
+  the legacy tabs.executeScript fallback), and as a last resort reloads the
+  tab once and retries.
+* Added an on-page "down-PDF" button at the bottom-left of a post that has
+  photos. It runs the same scan and is the primary path on Firefox for
+  Android, where extension popups may not be shown.
+* Android support: browser_specific_settings.gecko_android (min 121),
+  platform detection, and PDF delivery that opens the finished PDF in a tab
+  when downloads.download is unavailable, so the Android PDF viewer can save
+  or share it.
+* Mobile photo navigation: next/previous controls are tried first on Android,
+  followed by ArrowRight and a synthetic touch swipe.
+* Version bumped to 1.2.0 (AMO requires a higher version than 1.1.0).
+
+1.1.0 - previous release notes
 
 This release replaces the previous image-detection and packaging code. The
 1.0.0 build only read thumbnail URLs from the rendered post, so a post with

@@ -11,33 +11,94 @@ api.runtime.onMessage.addListener((message) => {
   if (message && message.type === "progress" && message.text) setStatus(message.text);
 });
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function ping(tabId) {
+  const reply = await api.tabs.sendMessage(tabId, { type: "ping" });
+  if (!reply || !reply.ok) throw new Error("no content script");
+}
+
 async function injectContentScript(tabId) {
-  if (api.scripting && api.scripting.executeScript) {
-    await api.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
-  } else {
-    await api.tabs.executeScript(tabId, { file: "content.js" });
-  }
+  const errors = [];
+  try {
+    if (api.scripting && api.scripting.executeScript) {
+      await api.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+      return;
+    }
+  } catch (error) { errors.push(error.message); }
+  try {
+    if (api.tabs.executeScript) {
+      await api.tabs.executeScript(tabId, { file: "content.js" });
+      return;
+    }
+  } catch (error) { errors.push(error.message); }
+  throw new Error(errors.join(" / ") || "injection API unavailable");
+}
+
+function waitForLoad(tabId, timeout = 20000) {
+  return new Promise((resolve) => {
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      api.tabs.onUpdated.removeListener(listener);
+      clearTimeout(timer);
+      resolve();
+    };
+    const listener = (id, info) => { if (id === tabId && info.status === "complete") done(); };
+    const timer = setTimeout(done, timeout);
+    api.tabs.onUpdated.addListener(listener);
+  });
 }
 
 async function ensureContentScript(tabId) {
+  try { await ping(tabId); return true; } catch {}
   try {
-    await api.tabs.sendMessage(tabId, { type: "ping" });
-  } catch {
     await injectContentScript(tabId);
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
+    await sleep(350);
+    await ping(tabId);
+    return true;
+  } catch {}
+  try {
+    const loaded = waitForLoad(tabId);
+    await api.tabs.reload(tabId);
+    await loaded;
+    await sleep(900);
+    await ping(tabId);
+    return true;
+  } catch {}
+  return false;
+}
+
+const FACEBOOK_URL = /^https:\/\/([a-z0-9-]+\.)?facebook\.com\//i;
+
+async function targetTab() {
+  const [active] = await api.tabs.query({ active: true, currentWindow: true });
+  if (active && FACEBOOK_URL.test(active.url || "")) return active;
+  const candidates = await api.tabs.query({ url: "*://*.facebook.com/*" });
+  candidates.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+  return candidates[0] || active;
 }
 
 (async () => {
   try {
-    const [tab] = await api.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !/^https:\/\/([a-z0-9-]+\.)?facebook\.com\//i.test(tab.url || "")) {
-      setStatus("Open a Facebook post in this tab, then click the toolbar button again.");
+    const tab = await targetTab();
+    if (!tab || !FACEBOOK_URL.test(tab.url || "")) {
+      setStatus("Open a Facebook post in a tab, then click the toolbar button again.");
       return;
     }
-    await ensureContentScript(tab.id);
+    const ready = await ensureContentScript(tab.id);
+    if (!ready) {
+      setStatus("Reload the Facebook tab once, then click here again (or use the on-page PDF button).");
+      return;
+    }
+    try { await api.tabs.update(tab.id, { active: true }); } catch {}
+    await sleep(200);
     setStatus("Scanning the post's photos…", 0.05);
-    const scan = await api.tabs.sendMessage(tab.id, { type: "scan" });
+    const scan = await Promise.race([
+      api.tabs.sendMessage(tab.id, { type: "scan" }),
+      sleep(150000).then(() => { throw new Error("Scan timed out. Use the on-page PDF button instead."); })
+    ]);
     if (!scan || !scan.images || !scan.images.length) {
       setStatus((scan && scan.reason) || "No photos found in the open post.");
       return;
@@ -57,7 +118,10 @@ async function ensureContentScript(tabId) {
     }
     const failed = result.failures && result.failures.length ? `\nSkipped: ${result.failures.join("; ")}` : "";
     const quality = result.minWidth ? `\nSmallest image: ${result.minWidth}px wide.` : "";
-    setStatus(`Saved ${result.count} photo${result.count === 1 ? "" : "s"} into one PDF in Downloads.${quality}${failed}`, 1);
+    const where = result.how === "tab"
+      ? `Opened ${result.count}-page PDF in a new tab (use its download/share button).`
+      : `Saved ${result.count} photo${result.count === 1 ? "" : "s"} into one PDF in Downloads.`;
+    setStatus(`${where}${quality}${failed}`, 1);
   } catch (error) {
     setStatus(`Error: ${(error && error.message) || error}`);
   }

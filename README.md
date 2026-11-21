@@ -24,6 +24,38 @@ separate login, no server, no analytics and no remote code.
    Downloads as `Facebook_Post_HD_<date>_<time>.pdf`.
 5. The viewer is closed and the page returns to the post.
 
+## Userscript (Android-friendly)
+
+`fb-post-photos-pdf.user.js` does the same job inside Tampermonkey, so no AMO
+signing/review is needed. Tampermonkey supports Firefox for Android 120+.
+
+1. Install Tampermonkey from AMO.
+2. Open
+   `https://raw.githubusercontent.com/lutfor183/fb-post-image-downloader/main/fb-post-photos-pdf.user.js`
+3. Tap **Install** and allow the cross-origin request for fbcdn.
+
+Open a Facebook post and use the **⤓ PDF** button at the bottom-left. On
+Android the finished PDF opens from a link in the status bubble. Updates are
+picked up from the same raw URL (`@updateURL`).
+
+## Android
+
+Firefox for Android 121+ is supported. Use the on-page **⤓ PDF** button that
+appears at the bottom-left of a post with photos (Firefox for Android may not
+show extension popups). On Android the finished PDF is opened in a new tab so
+you can save or share it from the PDF viewer.
+
+Photo navigation on Android uses the viewer's next/previous controls first,
+then ArrowRight, then a synthetic swipe, so it works with the mobile viewer.
+
+## Troubleshooting
+
+`Could not establish connection. Receiving end does not exist.` means the
+Facebook tab was opened before the add-on was installed or reloaded. The popup
+now injects the content script and, if that is not possible, reloads the tab
+once. If it still fails, reload the tab manually or use the on-page **⤓ PDF**
+button.
+
 ## Install (development)
 
 Temporary, until Firefox restarts:

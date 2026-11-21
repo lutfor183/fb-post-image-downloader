@@ -3,6 +3,8 @@
   window.__fbHdDownloader = true;
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  let isAndroid = false;
+  try { browser.runtime.getPlatformInfo().then((info) => { isAndroid = info.os === "android"; }).catch(() => {}); } catch {}
 
   function shown(el) {
     const style = getComputedStyle(el);
@@ -217,24 +219,71 @@
     return last;
   }
 
-  async function advance(root) {
+  function swipe(root) {
+    const target = mainImage(root) || root;
+    const r = target.getBoundingClientRect();
+    if (!r.width) return;
+    const y = r.top + r.height / 2;
+    const from = r.left + r.width * 0.82;
+    const to = r.left + r.width * 0.18;
+    const touch = (x, type) => {
+      try {
+        const hasTouch = typeof Touch === "function";
+        if (hasTouch && typeof TouchEvent === "function") {
+          const point = new Touch({ identifier: 1, target, clientX: x, clientY: y, pageX: x, pageY: y });
+          const list = type === "touchend" ? [] : [point];
+          target.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: list, targetTouches: list, changedTouches: [point] }));
+          return;
+        }
+      } catch {}
+      try {
+        target.dispatchEvent(new PointerEvent(type.replace("touch", "pointer"), {
+          bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: "touch", isPrimary: true
+        }));
+      } catch {}
+    };
+    touch(from, "touchstart");
+    for (let i = 1; i <= 6; i++) touch(from + ((to - from) * i) / 6, "touchmove");
+    touch(to, "touchend");
+  }
+
+  async function clickNext(root) {
     const before = urlOf(mainImage(root));
     if (!before) return null;
-    press("ArrowRight");
-    const keyed = await waitMainChange(root, before, 2500);
-    if (keyed) return keyed;
     const button = control(root, "next");
     if (button) {
       button.click();
-      const clicked = await waitMainChange(root, before, 2500);
-      if (clicked) return clicked;
+      const changed = await waitMainChange(root, before, isAndroid ? 1800 : 2500);
+      if (changed) return changed;
     }
     const edge = edgeControl(root, "right");
     if (edge && edge !== button) {
       edge.click();
-      return waitMainChange(root, before, 2500);
+      const changed = await waitMainChange(root, before, isAndroid ? 1800 : 2500);
+      if (changed) return changed;
     }
     return null;
+  }
+
+  async function advance(root) {
+    const before = urlOf(mainImage(root));
+    if (!before) return null;
+    if (isAndroid) {
+      const clicked = await clickNext(root);
+      if (clicked) return clicked;
+      press("ArrowRight");
+      let changed = await waitMainChange(root, before, 1200);
+      if (changed) return changed;
+      swipe(root);
+      return waitMainChange(root, before, 2200);
+    }
+    press("ArrowRight");
+    const keyed = await waitMainChange(root, before, 2500);
+    if (keyed) return keyed;
+    const clicked = await clickNext(root);
+    if (clicked) return clicked;
+    swipe(root);
+    return waitMainChange(root, before, 2200);
   }
 
   async function rewind(root, steps) {
@@ -388,6 +437,58 @@
       busy = false;
     }
   }
+
+  let uiTimer = null;
+  function ensureUi() {
+    if (document.getElementById("fbhd-launcher")) return;
+    let show = false;
+    try {
+      show = photoAnchors(postScope()).length > 0 ||
+        document.querySelectorAll('a[href*="fbid="], a[href*="/photo"]').length > 0 ||
+        Boolean(findViewer());
+    } catch {}
+    if (!show) return;
+    const host = document.createElement("div");
+    host.id = "fbhd-launcher";
+    host.style.cssText = "position:fixed;left:14px;bottom:14px;z-index:2147483647;display:flex;align-items:center;gap:8px;font:13px/1.3 system-ui,sans-serif;";
+    const statusEl = document.createElement("span");
+    statusEl.style.cssText = "display:none;max-width:56vw;background:rgba(0,0,0,.82);color:#fff;padding:6px 10px;border-radius:8px;";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "⤓ PDF";
+    button.title = "Download this post's photos as one PDF";
+    button.style.cssText = "all:unset;cursor:pointer;background:#1877f2;color:#fff;padding:9px 14px;border-radius:20px;box-shadow:0 2px 8px rgba(0,0,0,.35);font:600 13px system-ui,sans-serif;";
+    button.addEventListener("click", () => runFromPage(button, statusEl));
+    host.append(statusEl, button);
+    document.documentElement.appendChild(host);
+  }
+  function checkUi() {
+    try { if (!document.getElementById("fbhd-launcher")) ensureUi(); } catch {}
+    clearTimeout(uiTimer);
+    uiTimer = setTimeout(checkUi, 5000);
+  }
+  async function runFromPage(button, statusEl) {
+    const say = (text) => { statusEl.textContent = text || ""; statusEl.style.display = text ? "inline-block" : "none"; };
+    if (busy) return;
+    button.disabled = true;
+    button.style.opacity = ".6";
+    try {
+      say("Scanning…");
+      const result = await scan();
+      if (!result.images.length) { say(result.reason || "No photos found."); return; }
+      say(`Found ${result.images.length}. Building PDF…`);
+      const saved = await browser.runtime.sendMessage({ type: "download", images: result.images });
+      if (!saved || !saved.ok) { say(`Failed: ${(saved && saved.error) || "unknown error"}`); return; }
+      say(saved.how === "tab" ? `Opened PDF (${saved.count} pages).` : `Saved PDF (${saved.count} pages).`);
+    } catch (error) {
+      say(`Error: ${(error && error.message) || error}`);
+    } finally {
+      button.disabled = false;
+      button.style.opacity = "1";
+      setTimeout(() => say(""), 10000);
+    }
+  }
+  setTimeout(checkUi, 1500);
 
   browser.runtime.onMessage.addListener((message) => {
     if (!message || typeof message !== "object") return undefined;

@@ -1,12 +1,13 @@
 {
   "manifest_version": 2,
   "name": "Facebook Post Image Downloader",
-  "version": "1.1.0",
+  "version": "1.5.0",
   "description": "Select, preview, and download the images of the Facebook post you are viewing as one PDF.",
   "permissions": [
     "downloads",
     "tabs",
     "scripting",
+    "notifications",
     "https://facebook.com/*",
     "https://*.facebook.com/*",
     "https://*.fbcdn.net/*",
@@ -20,8 +21,7 @@
     "persistent": true
   },
   "browser_action": {
-    "default_title": "Download this Facebook post's photos (HD PDF)",
-    "default_popup": "popup.html"
+    "default_title": "Download this Facebook post's photos (HD PDF)"
   },
   "content_scripts": [
     {
@@ -44,6 +44,9 @@
           "none"
         ]
       }
+    },
+    "gecko_android": {
+      "strict_min_version": "121.0"
     }
   }
 }
